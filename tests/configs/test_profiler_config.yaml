@@ -20,14 +20,28 @@ test_suite_config:
           mode: mandatory_success
 
         - names:
-            - TestProfiler::test_kineto_profiler_with_environment_variable  # failed
-            - TestProfiler::test_basic_profile  # skipped
-            - TestProfiler::test_event_list  # skipped
-            - TestProfiler::test_dynamic_toggle  # skipped
-            - TestProfilerEventsParity::test_profiler_flow_events_parity  # skipped silently
-            - TestProfilerEventsParity::test_profiler_timestamp_consistency  # skipped silently
-            - TestProfilerEventsParity::test_profiler_external_id_parity  # skipped silently
-            - TestProfilerEventsParity::test_profiler_activity_type_parity  # skipped silently
+            # RuntimeError: VFIO DeviceOpenFail during profiler teardown ->
+            # subprocess exit 255 -> AssertionError: Kineto is not working
+            # properly with the Dynolog environment variable (segfault in
+            # ProfilerStateBase destructor). Needs PrivateUse1 activity
+            # check and device-init guard in subprocess snippet.
+            - TestProfiler::test_kineto_profiler_with_environment_variable
+            # SKIPPED: @unittest.skipUnless(TEST_CUDA or TEST_XPU, "requires gpu")
+            # Needs TEST_SPYRE added to upstream skip decorator.
+            - TestProfiler::test_basic_profile
+            # SKIPPED: @unittest.skipIf(not torch.cuda.is_available()) —
+            # needs Spyre guard; forward portion only (has backward).
+            - TestProfiler::test_event_list
+            # SKIPPED: @unittest.skipIf(not torch.cuda.is_available()) —
+            # needs Spyre guard + ProfilerActivity swap.
+            - TestProfiler::test_dynamic_toggle
+            # Class-level @skipIf(not torch.cuda.is_available()) blocks
+            # all 4 tests silently. Needs: class gate +
+            # ProfilerActivity.CUDA -> PrivateUse1, device="cuda" -> "spyre".
+            - TestProfilerEventsParity::test_profiler_flow_events_parity
+            - TestProfilerEventsParity::test_profiler_timestamp_consistency
+            - TestProfilerEventsParity::test_profiler_external_id_parity
+            - TestProfilerEventsParity::test_profiler_activity_type_parity
           mode: skip
 
     # TestMemoryProfilerTimeline uses instantiate_device_type_tests() with only_for=DEVICE_LIST_SUPPORT_PROFILING_TEST = ('cpu', 'cuda', 'xpu').
@@ -51,9 +65,14 @@ test_suite_config:
       unlisted_test_mode: skip
       tests:
         - names:
-            - CppThreadTestCUDA::test_with_enable_profiler_in_child_thread_cuda # skipped
-            - CppThreadTestCUDA::test_without_enable_profiler_in_child_thread_cuda # skipped                           
-            - CppThreadTestCUDA::test_profile_memory_cuda # skipped
+            # All 3 SKIPPED: "Test machine does not have cuda" — setUp()
+            # gates on torch.cuda.is_available(). Needs CppThreadTestSpyre
+            # class (follow CppThreadTestXPU pattern in upstream).
+            - CppThreadTestCUDA::test_with_enable_profiler_in_child_thread_cuda
+            - CppThreadTestCUDA::test_without_enable_profiler_in_child_thread_cuda
+            # Also needs privateuse1_memory_usage support in addition to
+            # CppThreadTestSpyre class.
+            - CppThreadTestCUDA::test_profile_memory_cuda
           mode: skip
 
     # =========================================================================
@@ -74,9 +93,15 @@ test_suite_config:
           mode: mandatory_success
 
         - names:
-            - TestExecutionTrace::test_execution_trace_env_enabled_with_kineto  # failed
-            - TestExecutionTrace::test_execution_trace_with_pt2  # skipped
-            - TestExecutionTrace::test_execution_trace_env_enabled_with_pt2  # skipped
+            # AssertionError: Scalars are not close! Expected 0 but got 3.
+            # ET output dir has 3 unexpected files when env-var should
+            # disable trace collection. Likely env-var check not honored
+            # on Spyre path.
+            - TestExecutionTrace::test_execution_trace_env_enabled_with_kineto
+            # SKIPPED: "torch.compile is not supported on python 3.12+" —
+            # payload() also calls z.backward() (Spyre is inference-only).
+            - TestExecutionTrace::test_execution_trace_with_pt2
+            - TestExecutionTrace::test_execution_trace_env_enabled_with_pt2
           mode: skip
 
   global:
