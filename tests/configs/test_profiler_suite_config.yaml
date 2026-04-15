@@ -1,0 +1,123 @@
+test_suite_config:
+  files:
+    # =========================================================================
+    # test_profiler.py
+    #
+    # Classes: TestProfiler, TestExperimentalUtils, TestProfilerEventsParity
+    #
+    # None of these use instantiate_device_type_tests(). The OOT wrapper
+    # injects it. 
+    # =========================================================================
+    - path: ${TORCH_ROOT}/test/profiler/test_profiler.py
+      unlisted_test_mode: skip
+      tests:
+        - names: # CPU-only tests that invoke torch-spyre code.
+            - TestProfiler::test_kineto
+            - TestProfiler::test_module_hierarchy
+            - TestProfiler::test_profiler_correlation_id
+            - TestProfiler::test_memory_profiler
+            - TestProfiler::test_flops
+            - TestProfiler::test_kineto_profiler_api
+            - TestProfiler::test_tensorboard_trace_handler
+            - TestProfiler::test_profiler_tracing
+            - TestProfiler::test_basic_chrome_trace
+            - TestProfiler::test_cpu_annotation_overlap
+            - TestProfiler::test_user_annotation
+          mode: mandatory_success
+
+        - names: # need upstream code mods (device string / activity enum swaps) (failed)
+            - TestProfiler::test_kineto_profiler_with_environment_variable  # Needs: adapt PrivateUse1 activity check; forward portion only
+          mode: skip
+
+        - names: # blocked by CUDA-only skip decorators on the method (skipped)
+            - TestProfiler::test_basic_profile  # @unittest.skipUnless(TEST_CUDA or TEST_XPU, "requires gpu") - needs TEST_SPYRE added
+            - TestProfiler::test_event_list  # @unittest.skipIf(not torch.cuda.is_available()) - needs Spyre guard; forward portion only (has backward)
+            - TestProfiler::test_dynamic_toggle  # @unittest.skipIf(not torch.cuda.is_available()) - needs Spyre guard + ProfilerActivity swap
+          mode: skip
+
+        - names: # mock uses CUDA device type constant
+            - TestExperimentalUtils::test_utils_compute_idle_time
+          mode: mandatory_success
+
+        - names: # class-level @skipIf(not torch.cuda.is_available()) blocks all 4 (skipped silently)
+            - TestProfilerEventsParity::test_profiler_flow_events_parity  # Needs: class gate + ProfilerActivity.CUDA -> PrivateUse1, device="cuda" -> "spyre"
+            - TestProfilerEventsParity::test_profiler_timestamp_consistency  # Needs: CUDA tensor -> Spyre tensor, same activity swap
+            - TestProfilerEventsParity::test_profiler_external_id_parity  # Needs: same activity + device swaps
+            - TestProfilerEventsParity::test_profiler_activity_type_parity  # Needs: same swaps, verify "cpu_op" category
+          mode: skip
+
+    # =========================================================================
+    # test_memory_profiler.py
+    #
+    # TestMemoryProfilerTimeline uses instantiate_device_type_tests() with
+    # only_for=DEVICE_LIST_SUPPORT_PROFILING_TEST = ('cpu', 'cuda', 'xpu').
+    # Upstream tuple still excludes privateuse1, BUT run_test.sh
+    # now handles "restricted" classes: it intercepts the upstream only_for
+    # call, saves the class + test methods before deletion, restores them,
+    # then re-injects instantiate_device_type_tests() WITHOUT only_for so
+    # TorchTestBase generates the Spyre variant.
+    #
+    #
+    # =========================================================================
+    - path: ${TORCH_ROOT}/test/profiler/test_memory_profiler.py
+      unlisted_test_mode: skip
+      tests:
+        - names:
+            - TestMemoryProfilerTimeline::test_memory_timeline_no_id
+          mode: mandatory_success
+
+    # =========================================================================
+    # test_cpp_thread.py
+    #
+    # CppThreadTestCUDA: standalone class, setUp() gates on
+    # torch.cuda.is_available(). XPU added by duplicating the entire class
+    # as CppThreadTestXPU (instantiate_device_type_tests can't work here
+    # because setUpClass() needs the concrete class to register EventHandler).
+    # Spyre needs same pattern: create CppThreadTestSpyre.
+    # =========================================================================
+    - path: ${TORCH_ROOT}/test/profiler/test_cpp_thread.py
+      unlisted_test_mode: skip
+      tests:
+        - names: # Spyre equivalent feasible — forward-only, tests cross-thread profiler correctness
+            - CppThreadTestCUDA::test_with_enable_profiler_in_child_thread_cuda                                    
+            - CppThreadTestCUDA::test_without_enable_profiler_in_child_thread_cuda                                 
+          mode: skip  # needs CppThreadTestSpyre class (follow CppThreadTestXPU pattern)                           
+                                                                                                             
+        - names: # Spyre equivalent feasible IF memory profiling hooks are implemented                             
+            - CppThreadTestCUDA::test_profile_memory_cuda                                                          
+          mode: skip  # needs CppThreadTestSpyre + privateuse1_memory_usage support 
+
+    # =========================================================================
+    # test_execution_trace.py
+    #
+    # TestExecutionTrace uses instantiate_device_type_tests() with
+    # only_for=["cpu", "cuda"] + optional xpu/hpu - no privateuse1.
+    # The only_for restriction is now bypassed by run_test.sh (PR #1492).
+    # However, all 9 device-parameterized tests call payload() which
+    # invokes z.backward() - Spyre is inference-only, so backward fails.
+    # 4 tests have no device parameter (CPU-only infrastructure, Bucket D).
+    # =========================================================================
+    - path: ${TORCH_ROOT}/test/profiler/test_execution_trace.py
+      unlisted_test_mode: skip
+      tests:
+        - names: # only_for bypassed by #1492, but payload() calls z.backward() (Spyre is inference-only)
+            - TestExecutionTrace::test_execution_trace_with_kineto
+            - TestExecutionTrace::test_execution_trace_alone
+            - TestExecutionTrace::test_execution_trace_env_disabled
+            - TestExecutionTrace::test_execution_trace_start_stop 
+            - TestExecutionTrace::test_execution_trace_repeat_in_loop 
+          mode: mandatory_success
+
+        - names: # only_for bypassed by #1492, but payload() calls z.backward() (Spyre is inference-only) (failed)
+            - TestExecutionTrace::test_execution_trace_env_enabled_with_kineto  # Same backward blocker
+          mode: skip
+
+        - names: # backward pass + PT2 specific (skipped)
+            - TestExecutionTrace::test_execution_trace_with_pt2  # payload() backward; PT2 compile path
+            - TestExecutionTrace::test_execution_trace_env_enabled_with_pt2  # payload() backward; PT2 compile path
+          mode: skip
+
+  global:
+    supported_dtypes:
+      - name: float16
+      - name: int64
