@@ -79,12 +79,11 @@ test_suite_config:
       unlisted_test_mode: skip
       tests:
         - names: # Spyre equivalent feasible — forward-only, tests cross-thread profiler correctness
-            - CppThreadTestCUDA::test_with_enable_profiler_in_child_thread_cuda                                    
-            - CppThreadTestCUDA::test_without_enable_profiler_in_child_thread_cuda                                 
+            - CppThreadTestCUDA::test_with_enable_profiler_in_child_thread_cuda
+            - CppThreadTestCUDA::test_without_enable_profiler_in_child_thread_cuda
           mode: skip  # needs CppThreadTestSpyre class (follow CppThreadTestXPU pattern)                           
-                                                                                                             
         - names: # Spyre equivalent feasible IF memory profiling hooks are implemented                             
-            - CppThreadTestCUDA::test_profile_memory_cuda                                                          
+            - CppThreadTestCUDA::test_profile_memory_cuda
           mode: skip  # needs CppThreadTestSpyre + privateuse1_memory_usage support 
 
     # =========================================================================
@@ -104,8 +103,8 @@ test_suite_config:
             - TestExecutionTrace::test_execution_trace_with_kineto
             - TestExecutionTrace::test_execution_trace_alone
             - TestExecutionTrace::test_execution_trace_env_disabled
-            - TestExecutionTrace::test_execution_trace_start_stop 
-            - TestExecutionTrace::test_execution_trace_repeat_in_loop 
+            - TestExecutionTrace::test_execution_trace_start_stop
+            - TestExecutionTrace::test_execution_trace_repeat_in_loop
           mode: mandatory_success
 
         - names: # only_for bypassed by #1492, but payload() calls z.backward() (Spyre is inference-only) (failed)
