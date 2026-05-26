@@ -264,6 +264,11 @@ void AiuptiActivityProfilerSession::handleKernelActivity(
   kernel_activity->addMetadataQuoted("context",
                                      std::to_string(activity->context_id));
   kernel_activity->addMetadata("correlation", activity->correlation_id);
+  kernel_activity->addMetadata("cycles_ts1", activity->cycles_ts1);
+  kernel_activity->addMetadata("cycles_ts2", activity->cycles_ts2);
+  kernel_activity->addMetadata("cycles_ts3", activity->cycles_ts3);
+  kernel_activity->addMetadata("cycles_ts4", activity->cycles_ts4);
+  kernel_activity->addMetadata("cycles_ts5", activity->cycles_ts5);
 
   recordStream(kernel_activity->device, kernel_activity->resource);
 
@@ -378,6 +383,11 @@ void AiuptiActivityProfilerSession::handleMemcpyActivity(
   memcpy_activity->addMetadata("memory operation id", activity->copy_kind);
   memcpy_activity->addMetadata("bytes", activity->bytes);
   memcpy_activity->addMetadata("memory bandwidth (GB/s)", bandwidth(activity));
+  memcpy_activity->addMetadata("cycles_ts1", activity->cycles_ts1);
+  memcpy_activity->addMetadata("cycles_ts2", activity->cycles_ts2);
+  memcpy_activity->addMetadata("cycles_ts3", activity->cycles_ts3);
+  memcpy_activity->addMetadata("cycles_ts4", activity->cycles_ts4);
+  memcpy_activity->addMetadata("cycles_ts5", activity->cycles_ts5);
 
   if (memcpy_activity->resource == getBaseResourceId(activity)) {
     recordMemoryStream(memcpy_activity->device, memcpy_activity->resource,
