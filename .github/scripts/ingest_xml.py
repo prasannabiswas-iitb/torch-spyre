@@ -112,6 +112,15 @@ def parse_benchmark_xml(xml_path: Path):
     except ValueError:
         created_at = datetime.now(timezone.utc)
 
+    # ── extract testsuite-level version_info ───────────────────────────────
+    version_info = None
+    suite_props = suite.find("properties")
+    if suite_props is not None:
+        for p in suite_props.findall("property"):
+            if p.get("name") == "version_info":
+                version_info = p.get("value", "").strip() or None
+                break
+
     # ── group cases by (op_name, input_shapes) ─────────────────────────────
     groups: dict[tuple, dict] = defaultdict(dict)  # (op, shapes) -> {metric: tc_el}
 
@@ -152,12 +161,17 @@ def parse_benchmark_xml(xml_path: Path):
 
         # torch_spyre_ms / sendnn_ms live in tags of individual cases
         # For ratio: pull from any available case (consistent across metrics)
-        torch_spyre_ms = _opt_float(tags, "torch_spyre")
-        sendnn_ms = _opt_float(tags, "sendnn")
+        torch_spyre_ms = _opt_float(tags, "torch_spyre_ms")
+        sendnn_ms = _opt_float(tags, "sendnn_ms")
         ratio = _opt_float(tags, "ratio")
 
-        # stack detection: currently always torch-spyre from classname heuristic
-        stack = "torch-spyre"
+        # regression_status: read from kernel_ms testcase's tag properties
+        regression_status = None
+        if "kernel" in metric_cases:
+            kernel_tags = _tag_props(metric_cases["kernel"])
+            regression_status = kernel_tags.get("regression_status")
+            if regression_status == "N/A":
+                regression_status = None
 
         benchmarks.append(
             {
@@ -165,7 +179,6 @@ def parse_benchmark_xml(xml_path: Path):
                 "record_type": "op",
                 "operation_name": op_name,
                 "config_name": None,
-                "stack": stack,
                 "input_shapes": shapes_str,
                 "batch_size": None,
                 "prompt_length": None,
@@ -180,7 +193,7 @@ def parse_benchmark_xml(xml_path: Path):
                 "pt_util_percent": None,
                 "num_runs": None,
                 "custom_op_file": None,
-                "version_info": None,
+                "regression_status": regression_status,
                 "created_at": created_at,
                 # extra for dedup / display
                 "torch_spyre_ms": torch_spyre_ms,
@@ -192,6 +205,7 @@ def parse_benchmark_xml(xml_path: Path):
     run_meta = {
         "source_file": xml_path.name,
         "created_at": created_at,
+        "version_info": version_info,
     }
     return run_meta, benchmarks
 
@@ -208,10 +222,11 @@ def insert_benchmark_run(client, run_id: int, run_meta: dict) -> None:
             [
                 run_id,
                 run_meta["source_file"],
+                run_meta.get("version_info"),
                 run_meta["created_at"].replace(tzinfo=None),
             ]
         ],
-        column_names=["run_id", "source_file", "created_at"],
+        column_names=["run_id", "source_file", "version_info", "created_at"],
     )
 
 
@@ -227,7 +242,6 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
                 b["record_type"],
                 b["operation_name"],
                 b["config_name"],
-                b["stack"],
                 b["input_shapes"],
                 b["batch_size"],
                 b["prompt_length"],
@@ -242,7 +256,7 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
                 b["pt_util_percent"],
                 b["num_runs"],
                 b["custom_op_file"],
-                b["version_info"],
+                b["regression_status"],
                 b["created_at"].replace(tzinfo=None),
             ]
             for b in benchmarks
@@ -253,7 +267,6 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
             "record_type",
             "operation_name",
             "config_name",
-            "stack",
             "input_shapes",
             "batch_size",
             "prompt_length",
@@ -268,7 +281,157 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
             "pt_util_percent",
             "num_runs",
             "custom_op_file",
-            "version_info",
+            "regression_status",
+            "created_at",
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+#  SENDNN XML detection & parsing
+# ---------------------------------------------------------------------------
+
+
+def is_sendnn_xml(root) -> bool:
+    """Return True if every testcase has classname containing 'sendnn'."""
+    cases = root.findall(".//testcase")
+    if not cases:
+        return False
+    return all("sendnn" in (tc.get("classname", "")) for tc in cases)
+
+
+def parse_sendnn_xml(xml_path: Path):
+    """
+    Parse a sendnn benchmark XML into (run_meta, list[benchmark_row]).
+
+    Returns:
+        run_meta  : dict  – data for sendnn_runs
+        benchmarks: list[dict] – data for sendnn_benchmarks
+    """
+    tree = etree.parse(str(xml_path))
+    root = tree.getroot()
+
+    suite = root.find(".//testsuite")
+    if suite is None:
+        print(f"  [warn] No <testsuite> in {xml_path.name}", file=sys.stderr)
+        return None, []
+
+    ts_str = suite.get("timestamp", "")
+    try:
+        created_at = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except ValueError:
+        created_at = datetime.now(timezone.utc)
+
+    benchmarks = []
+    for tc in suite.findall(".//testcase"):
+        tags = _tag_props(tc)
+
+        def _tag_val(key, default=None):
+            v = tags.get(key, default)
+            if v == "null" or v is None:
+                return None
+            return v
+
+        def _tag_float(key):
+            v = _tag_val(key)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+
+        def _tag_int(key):
+            v = _tag_val(key)
+            if v is None:
+                return None
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+
+        benchmarks.append(
+            {
+                "benchmark_id": uuid.uuid4().int >> 64,
+                "record_type": _tag_val("record_type", "op"),
+                "operation_name": _tag_val("op"),
+                "input_shapes": _tag_val("input_shapes"),
+                "batch_size": _tag_int("batch_size"),
+                "prompt_length": _tag_int("prompt_length"),
+                "run_mode": _tag_val("run_mode", "sendnn_benchmark"),
+                "total_duration_ms": _tag_float("total_duration_ms"),
+                "kernel_mean_ms": _tag_float("kernel_mean_ms"),
+                "memory_transfer_mean_ms": _tag_float("memory_transfer_mean_ms"),
+                "pt_util_percent": _tag_float("pt_util_percent"),
+                "custom_op_file": None,
+                "created_at": created_at,
+            }
+        )
+
+    run_meta = {
+        "source_file": xml_path.name,
+        "created_at": created_at,
+    }
+    return run_meta, benchmarks
+
+
+# ---------------------------------------------------------------------------
+# ── SENDNN ClickHouse insertion ───────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+
+def insert_sendnn_run(client, run_id: int, run_meta: dict) -> None:
+    client.insert(
+        "sendnn_runs",
+        [
+            [
+                run_id,
+                run_meta["source_file"],
+                run_meta["created_at"].replace(tzinfo=None),
+            ]
+        ],
+        column_names=["run_id", "source_file", "created_at"],
+    )
+
+
+def insert_sendnn_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
+    if not benchmarks:
+        return
+    client.insert(
+        "sendnn_benchmarks",
+        [
+            [
+                b["benchmark_id"],
+                run_id,
+                b["record_type"],
+                b["operation_name"],
+                b["input_shapes"],
+                b["batch_size"],
+                b["prompt_length"],
+                b["run_mode"],
+                b["total_duration_ms"],
+                b["kernel_mean_ms"],
+                b["memory_transfer_mean_ms"],
+                b["pt_util_percent"],
+                b["custom_op_file"],
+                b["created_at"].replace(tzinfo=None),
+            ]
+            for b in benchmarks
+        ],
+        column_names=[
+            "benchmark_id",
+            "run_id",
+            "record_type",
+            "operation_name",
+            "input_shapes",
+            "batch_size",
+            "prompt_length",
+            "run_mode",
+            "total_duration_ms",
+            "kernel_mean_ms",
+            "memory_transfer_mean_ms",
+            "pt_util_percent",
+            "custom_op_file",
             "created_at",
         ],
     )
@@ -606,8 +769,34 @@ def main():
         tree = etree.parse(str(xml_path))
         root = tree.getroot()
 
-        # ── Dispatch: benchmark vs test-result ─────────────────────────────
-        if is_benchmark_xml(root):
+        # ── Dispatch: sendnn vs benchmark vs test-result ────────────────────
+        if is_sendnn_xml(root):
+            print("  Detected: sendnn benchmark XML")
+            run_meta, benchmarks = parse_sendnn_xml(xml_path)
+            if run_meta is None:
+                continue
+
+            # Deduplication: skip if source_file already in sendnn_runs
+            existing = client.query(
+                "SELECT count() FROM sendnn_runs WHERE source_file = {sf:String}",
+                parameters={"sf": run_meta["source_file"]},
+            )
+            if existing.result_rows[0][0] > 0:
+                print(
+                    f"  Already ingested sendnn — skipping {run_meta['source_file']}"
+                )
+                continue
+
+            run_id = uuid.uuid4().int >> 64
+            print(f"  run_id={run_id}  sendnn_benchmarks={len(benchmarks)}")
+
+            insert_sendnn_run(client, run_id, run_meta)
+            insert_sendnn_benchmarks(client, run_id, benchmarks)
+
+            total_benchmarks += len(benchmarks)
+            print(f"  Inserted {len(benchmarks)} sendnn benchmark rows")
+
+        elif is_benchmark_xml(root):
             print("  Detected: performance benchmark XML")
             run_meta, benchmarks = parse_benchmark_xml(xml_path)
             if run_meta is None:
