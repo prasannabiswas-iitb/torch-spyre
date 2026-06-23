@@ -782,9 +782,7 @@ def main():
                 parameters={"sf": run_meta["source_file"]},
             )
             if existing.result_rows[0][0] > 0:
-                print(
-                    f"  Already ingested sendnn — skipping {run_meta['source_file']}"
-                )
+                print(f"  Already ingested sendnn — skipping {run_meta['source_file']}")
                 continue
 
             run_id = uuid.uuid4().int >> 64
