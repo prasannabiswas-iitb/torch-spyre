@@ -75,7 +75,11 @@ _METRIC_PRIORITY = ["wall_clock", "cpu", "spyre", "kernel", "memory_transfer"]
 
 # Pattern:  perf_{op_name}_{metric}_ms_{input_shapes}
 _PERF_NAME_RE = re.compile(
-    r"^perf_(?P<op>.+?)_(?P<metric>wall_clock|cpu|spyre|kernel|memory_transfer)_ms_(?P<shapes>.+)$"
+    r"^perf_(?P<op>.+?)_(?P<metric>wall_clock|cpu|spyre|kernel|memory_transfer)_ms(?:_(?P<shapes>.+))?$"
+)
+
+_GRANITE_CONFIG_RE = re.compile(
+    r"bs(?P<batch_size>\d+)(?:_pl(?P<prompt_length>\d+))?"
 )
 
 
@@ -134,7 +138,7 @@ def parse_benchmark_xml(xml_path: Path):
             continue
         op = m.group("op")
         metric = m.group("metric")
-        shapes = m.group("shapes")
+        shapes = m.group("shapes") or ""
         groups[(op, shapes)][metric] = tc
 
     # ── build one row per group ─────────────────────────────────────────────
@@ -150,6 +154,14 @@ def parse_benchmark_xml(xml_path: Path):
             if preferred in metric_cases:
                 total_ms = float(metric_cases[preferred].get("time", 0) or 0)
                 break
+
+        cpu_ms = None
+        if "cpu" in metric_cases:
+            cpu_ms = float(metric_cases["cpu"].get("time", 0) or 0)
+
+        spyre_ms = None
+        if "spyre" in metric_cases:
+            spyre_ms = float(metric_cases["spyre"].get("time", 0) or 0)
 
         kernel_ms = None
         if "kernel" in metric_cases:
@@ -173,25 +185,43 @@ def parse_benchmark_xml(xml_path: Path):
             if regression_status == "N/A":
                 regression_status = None
 
+        is_granite = op_name.startswith("granite_")
+        if is_granite:
+            config_m = _GRANITE_CONFIG_RE.search(op_name)
+            batch_size = int(config_m.group("batch_size")) if config_m else None
+            pl_raw = config_m.group("prompt_length") if config_m else None
+            prompt_length = int(pl_raw) if pl_raw and pl_raw.isdigit() else None
+            config_name = tags.get("config")
+            run_mode = tags.get("mode")
+            pt_util = _opt_float(tags, "pt_util")
+            num_runs_val = _opt_float(tags, "num_runs")
+            num_runs_int = int(num_runs_val) if num_runs_val is not None else None
+        else:
+            batch_size = None
+            prompt_length = None
+            config_name = None
+            run_mode = "op_benchmark"
+            pt_util = _opt_float(tags, "pt_util")
+            num_runs_val = _opt_float(tags, "num_runs")
+            num_runs_int = int(num_runs_val) if num_runs_val is not None else None
+
         benchmarks.append(
             {
                 "benchmark_id": uuid.uuid4().int >> 64,
-                "record_type": "op",
-                "operation_name": op_name,
-                "config_name": None,
-                "input_shapes": shapes_str,
-                "batch_size": None,
-                "prompt_length": None,
-                "run_mode": "op_benchmark",
-                "kernel_name": None,
+                "record_type": "model" if is_granite else "op",
+                "operation_name": "granite" if is_granite else op_name,
+                "config_name": config_name,
+                "input_shapes": None if is_granite else (shapes_str or None),
+                "batch_size": batch_size,
+                "prompt_length": prompt_length,
+                "run_mode": run_mode,
                 "total_duration_ms": total_ms,
+                "cpu_ms": cpu_ms,
+                "spyre_ms": spyre_ms,
                 "kernel_mean_ms": kernel_ms,
-                "memcpy_htod_ms": None,
-                "memcpy_dtoh_ms": None,
-                "memset_device_ms": None,
                 "memory_transfer_mean_ms": mem_ms,
-                "pt_util_percent": None,
-                "num_runs": None,
+                "pt_util_percent": pt_util,
+                "num_runs": num_runs_int,
                 "custom_op_file": None,
                 "regression_status": regression_status,
                 "created_at": created_at,
@@ -246,12 +276,10 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
                 b["batch_size"],
                 b["prompt_length"],
                 b["run_mode"],
-                b["kernel_name"],
                 b["total_duration_ms"],
+                b["cpu_ms"],
+                b["spyre_ms"],
                 b["kernel_mean_ms"],
-                b["memcpy_htod_ms"],
-                b["memcpy_dtoh_ms"],
-                b["memset_device_ms"],
                 b["memory_transfer_mean_ms"],
                 b["pt_util_percent"],
                 b["num_runs"],
@@ -271,12 +299,10 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
             "batch_size",
             "prompt_length",
             "run_mode",
-            "kernel_name",
             "total_duration_ms",
+            "cpu_ms",
+            "spyre_ms",
             "kernel_mean_ms",
-            "memcpy_htod_ms",
-            "memcpy_dtoh_ms",
-            "memset_device_ms",
             "memory_transfer_mean_ms",
             "pt_util_percent",
             "num_runs",
@@ -360,6 +386,8 @@ def parse_sendnn_xml(xml_path: Path):
                 "prompt_length": _tag_int("prompt_length"),
                 "run_mode": _tag_val("run_mode", "sendnn_benchmark"),
                 "total_duration_ms": _tag_float("total_duration_ms"),
+                "cpu_ms": _tag_float("cpu_ms"),
+                "spyre_ms": _tag_float("spyre_ms"),
                 "kernel_mean_ms": _tag_float("kernel_mean_ms"),
                 "memory_transfer_mean_ms": _tag_float("memory_transfer_mean_ms"),
                 "pt_util_percent": _tag_float("pt_util_percent"),
@@ -410,6 +438,8 @@ def insert_sendnn_benchmarks(client, run_id: int, benchmarks: list[dict]) -> Non
                 b["prompt_length"],
                 b["run_mode"],
                 b["total_duration_ms"],
+                b["cpu_ms"],
+                b["spyre_ms"],
                 b["kernel_mean_ms"],
                 b["memory_transfer_mean_ms"],
                 b["pt_util_percent"],
@@ -428,6 +458,8 @@ def insert_sendnn_benchmarks(client, run_id: int, benchmarks: list[dict]) -> Non
             "prompt_length",
             "run_mode",
             "total_duration_ms",
+            "cpu_ms",
+            "spyre_ms",
             "kernel_mean_ms",
             "memory_transfer_mean_ms",
             "pt_util_percent",
