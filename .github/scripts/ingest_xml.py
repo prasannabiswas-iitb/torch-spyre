@@ -68,9 +68,7 @@ _PERF_NAME_RE = re.compile(
     r"^perf_(?P<op>.+?)_(?P<metric>wall_clock|cpu|spyre|kernel|memory_transfer)_ms(?:_(?P<shapes>.+))?$"
 )
 
-_GRANITE_CONFIG_RE = re.compile(
-    r"bs(?P<batch_size>\d+)(?:_pl(?P<prompt_length>\d+))?"
-)
+_GRANITE_CONFIG_RE = re.compile(r"bs(?P<batch_size>\d+)(?:_pl(?P<prompt_length>\d+))?")
 
 
 def is_benchmark_xml(root) -> bool:
@@ -301,8 +299,6 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
             "created_at",
         ],
     )
-
-
 
 
 # ---------------------------------------------------------------------------

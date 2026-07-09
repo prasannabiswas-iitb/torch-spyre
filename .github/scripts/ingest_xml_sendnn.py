@@ -258,7 +258,9 @@ def main():
         root = tree.getroot()
 
         if not is_sendnn_xml(root):
-            print(f"  [skip] Not a sendnn XML (classname missing 'sendnn'): {xml_path.name}")
+            print(
+                f"  [skip] Not a sendnn XML (classname missing 'sendnn'): {xml_path.name}"
+            )
             continue
 
         run_meta, benchmarks = parse_sendnn_xml(xml_path)
