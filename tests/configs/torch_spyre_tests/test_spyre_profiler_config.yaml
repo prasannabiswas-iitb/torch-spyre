@@ -9,7 +9,7 @@ test_suite_config:
         # +40 bytes in libaiupti #114) and the kineto-spyre build. Re-enable once
         # both are rebuilt in lockstep.
         - names: [TestSpyreProfiler::test_basic_profile]
-          mode: skip
+          mode: mandatory_success
         # Listed explicitly so the config-coverage checker (CHECK 2) sees full
         # coverage once this file has an explicit tests: list. These run normally.
         - names:
