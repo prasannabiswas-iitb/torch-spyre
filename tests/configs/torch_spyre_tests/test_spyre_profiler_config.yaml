@@ -10,3 +10,9 @@ test_suite_config:
         # both are rebuilt in lockstep.
         - names: [TestSpyreProfiler::test_basic_profile]
           mode: skip
+        # Listed explicitly so the config-coverage checker (CHECK 2) sees full
+        # coverage once this file has an explicit tests: list. These run normally.
+        - names:
+            - TestSpyreProfiler::test_event_list
+            - TestSpyreProfiler::test_profiler_timestamp_consistency
+          mode: mandatory_success
