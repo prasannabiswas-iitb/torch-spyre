@@ -18,7 +18,6 @@
 #include <libaiupti/aiupti_runtime_cbid.h>
 
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -91,19 +90,19 @@ inline std::string handleToHexString(ze_handle_type handle) {
   return fmt::format("0x{:016x}", reinterpret_cast<uintptr_t>(handle));
 }
 
-// Raw device timestamps TS1..TS5 as a compact JSON array, or nullopt when
-// all five are 0 (no counters for this record) so the key is omitted.
+// Raw device timestamps TS1..TS5 as a compact JSON array.
 template <class activity_type>
-inline std::optional<std::string> cyclesTsJson(const activity_type* activity) {
-  if (activity->cycles_ts1 == 0 && activity->cycles_ts2 == 0 &&
-      activity->cycles_ts3 == 0 && activity->cycles_ts4 == 0 &&
-      activity->cycles_ts5 == 0) {
-    return std::nullopt;
-  }
-  return nlohmann::json::array({activity->cycles_ts1, activity->cycles_ts2,
-                                activity->cycles_ts3, activity->cycles_ts4,
-                                activity->cycles_ts5})
-      .dump();
+inline std::string cyclesTsJson(const activity_type* activity) {
+  return fmt::format("[{},{},{},{},{}]", activity->cycles_ts1,
+                     activity->cycles_ts2, activity->cycles_ts3,
+                     activity->cycles_ts4, activity->cycles_ts5);
+}
+
+template <class activity_type>
+inline bool hasCyclesTs(const activity_type* activity) {
+  return activity->cycles_ts1 != 0 || activity->cycles_ts2 != 0 ||
+         activity->cycles_ts3 != 0 || activity->cycles_ts4 != 0 ||
+         activity->cycles_ts5 != 0;
 }
 
 inline std::string runtimeCbidName(AIUpti_runtime_api_trace_cbid cbid) {
@@ -376,9 +375,9 @@ void AiuptiActivityProfilerSession::handleKernelActivity(
                                    nlohmann::json(*ids).dump());
     }
   }
-  if (const auto cycles_ts = cyclesTsJson(activity)) {
-    kernel_activity->addMetadata("cycles_ts", *cycles_ts);
-  }
+  // Compute records always carry counters, so emit unconditionally: an
+  // all-zero array here signals a counter failure rather than absence.
+  kernel_activity->addMetadata("cycles_ts", cyclesTsJson(activity));
 
   recordStream(kernel_activity->device, kernel_activity->resource);
 
@@ -493,8 +492,13 @@ void AiuptiActivityProfilerSession::handleMemcpyActivity(
   memcpy_activity->addMetadata("memory operation id", activity->copy_kind);
   memcpy_activity->addMetadata("bytes", activity->bytes);
   memcpy_activity->addMetadata("memory bandwidth (GB/s)", bandwidth(activity));
-  if (const auto cycles_ts = cyclesTsJson(activity)) {
-    memcpy_activity->addMetadata("cycles_ts", *cycles_ts);
+  // AIUpti_ActivityMemcpy does not say whether the record came from a
+  // command buffer (real counters) or a standalone flex MEMCPY (always 0;
+  // today flex reports every DMA this way), so omit the key when all slots
+  // are 0. Gate on record kind instead once libaiupti marks which records
+  // carry counters.
+  if (hasCyclesTs(activity)) {
+    memcpy_activity->addMetadata("cycles_ts", cyclesTsJson(activity));
   }
 
   if (memcpy_activity->resource == getBaseResourceId(activity)) {

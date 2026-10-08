@@ -138,9 +138,9 @@ metadata:
   IDs are strings, and JavaScript consumers must keep them as strings rather
   than coercing them to numbers.
 
-Kernel and memcpy events also carry `args.cycles_ts`, a JSON array of five
-raw device timestamps `[TS1, TS2, TS3, TS4, TS5]` recorded at the pipeline
-stage boundaries:
+Kernel events (and, once counters are available, memcpy events) carry
+`args.cycles_ts`, a JSON array of five raw device timestamps
+`[TS1, TS2, TS3, TS4, TS5]` recorded at the pipeline stage boundaries:
 
 | Slot | Stage boundary |
 |---|---|
@@ -156,8 +156,12 @@ stage boundaries:
 - A slot reads 0 when the pipeline does not fill it. A compute pipeline fills
   TS1–TS5, an async DMAI fills only TS1–TS2, and an async DMAO fills only
   TS4–TS5.
-- The key is omitted when all five slots are 0, so treat it as optional.
-  Memset and memory-release events never carry it.
+- Kernel events always carry the key. An all-zero array on a kernel event
+  means the counters failed, not that they are unavailable.
+- On memcpy events the key is optional: it is present only when the record
+  has counters, and omitted when all five slots are 0. flex currently
+  reports DMA transfers without counters, so memcpy events do not carry it
+  yet. Memset and memory-release events never carry it.
 - Do not assume raw ordering. Skip zero slots and compare the remaining
   slots modulo 2^32, because a later stage can read a smaller value after a
   wrap.
