@@ -359,6 +359,17 @@ def test_compiled_kernel_event_keys_match_captured_debug_handles(
             )
             assert all(isinstance(handle_id, str) for handle_id in debug_handles)
             assert debug_handles == list(descriptor.debug_handle_ids)
+            # Raw 32-bit device timestamps TS1..TS5. Raw ordering is not
+            # asserted: the counter wraps and unfilled slots read 0.
+            cycles_ts = args.get("cycles_ts")
+            assert isinstance(cycles_ts, list), (
+                "args.cycles_ts must be a JSON array, not a quoted string"
+            )
+            assert len(cycles_ts) == 5
+            assert all(
+                isinstance(ts, int) and 0 <= ts <= 0xFFFFFFFF for ts in cycles_ts
+            )
+            assert any(cycles_ts), "compiled-kernel cycles_ts are all zero"
 
     def lineage(handle):
         yield handle
